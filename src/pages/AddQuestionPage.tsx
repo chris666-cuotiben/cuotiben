@@ -1,15 +1,17 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Save, ChevronDown, Plus, X, Camera, Check } from 'lucide-react'
+import { ArrowLeft, Save, ChevronDown, Plus, X, Camera, Check, AlertCircle, Loader, Crop } from 'lucide-react'
 import { saveQuestion, getCategories } from '../lib/storage'
-import { processImageWithOCR, createImagePreview, revokeImagePreview, isOCRConfigured } from '../lib/ocr-service'
+import { processImageWithOCR, createImagePreview, revokeImagePreview, isOCRConfigured, parseQuestionFromText, getOCRConfig } from '../lib/ocr-service'
 import ImageUploader from '../components/ocr/ImageUploader'
 import OCRReviewForm from '../components/ocr/OCRReviewForm'
+import ImageCropper from '../components/ocr/ImageCropper'
+import OCRTextEditor from '../components/ocr/OCRTextEditor'
 import type { Question } from '../types/question'
 import type { Category } from '../types/category'
 import type { ParsedQuestion, UploadedImage } from '../lib/ocr-service'
 
-type AddStep = 'upload' | 'review' | 'metadata'
+type AddStep = 'upload' | 'edit-text' | 'review' | 'metadata'
 
 export default function AddQuestionPage() {
   const navigate = useNavigate()
@@ -17,9 +19,13 @@ export default function AddQuestionPage() {
   const [categories, setCategories] = useState<Category[]>([])
   const [saving, setSaving] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [ocrStatus, setOcrStatus] = useState('')
+  const [ocrError, setOcrError] = useState('')
   const [images, setImages] = useState<UploadedImage[]>([])
+  const [ocrRawText, setOcrRawText] = useState('')
   const [ocrParsed, setOcrParsed] = useState<ParsedQuestion | null>(null)
   const [ocrConfigured, setOcrConfigured] = useState(false)
+  const [croppingImage, setCroppingImage] = useState<UploadedImage | null>(null)
 
   const [form, setForm] = useState({
     question_text: '',
@@ -48,16 +54,39 @@ export default function AddQuestionPage() {
   const handleStartOCR = async () => {
     if (images.length === 0) return
     setIsProcessing(true)
+    setOcrError('')
+    setOcrStatus('正在识别文字...')
 
     try {
+      const config = getOCRConfig()
+
+      // For Tesseract: use processImageWithOCR which returns fullText
+      // For Tencent: use callTencentOCR which also returns fullText
+      setOcrStatus('正在识别文字...（可能需要 5-20 秒）')
       const result = await processImageWithOCR(images[0].file)
-      setOcrParsed(result.parsed)
-      setStep('review')
+
+      if (result.textBlocks.length === 0 && !result.fullText) {
+        setOcrError('OCR 未识别到任何文字。请确认照片清晰、光线充足。')
+        setIsProcessing(false)
+        return
+      }
+
+      setOcrStatus('识别完成！')
+      setOcrRawText(result.fullText || result.textBlocks.map(b => b.text).join('\n'))
+      setStep('edit-text')
     } catch (err) {
-      alert(`OCR 识别失败：${err instanceof Error ? err.message : '未知错误'}`)
+      const msg = err instanceof Error ? err.message : '未知错误'
+      setOcrError(`识别失败：${msg}`)
     } finally {
       setIsProcessing(false)
+      setOcrStatus('')
     }
+  }
+
+  const handleTextConfirm = (editedText: string) => {
+    const parsed = parseQuestionFromText(editedText)
+    setOcrParsed(parsed)
+    setStep('review')
   }
 
   const handleOCRConfirm = (data: ParsedQuestion) => {
@@ -76,6 +105,28 @@ export default function AddQuestionPage() {
 
   const handleSkipOCR = () => {
     setStep('metadata')
+  }
+
+  const handleCropImage = (img: UploadedImage) => {
+    setCroppingImage(img)
+  }
+
+  const handleCropDone = (croppedBlob: Blob) => {
+    if (!croppingImage) return
+    // Replace the original image with the cropped version
+    const croppedFile = new File([croppedBlob], `cropped-${Date.now()}.jpg`, { type: 'image/jpeg' })
+    URL.revokeObjectURL(croppingImage.previewUrl)
+    const newImage: UploadedImage = {
+      file: croppedFile,
+      previewUrl: URL.createObjectURL(croppedBlob),
+      id: croppingImage.id,
+    }
+    setImages(images.map((img) => (img.id === croppingImage.id ? newImage : img)))
+    setCroppingImage(null)
+  }
+
+  const handleCropCancel = () => {
+    setCroppingImage(null)
   }
 
   const parentCategories = categories.filter((c) => !c.parent_id)
@@ -134,7 +185,8 @@ export default function AddQuestionPage() {
   // Step indicator labels
   const steps: { key: AddStep; label: string }[] = [
     { key: 'upload', label: '拍照' },
-    { key: 'review', label: '审核' },
+    { key: 'edit-text', label: '校对' },
+    { key: 'review', label: '确认' },
     { key: 'metadata', label: '信息' },
   ]
 
@@ -145,7 +197,8 @@ export default function AddQuestionPage() {
         <div className="flex items-center justify-between px-4 h-14">
           <button onClick={() => {
             if (step === 'metadata') setStep('review')
-            else if (step === 'review') setStep('upload')
+            else if (step === 'review') setStep('edit-text')
+            else if (step === 'edit-text') setStep('upload')
             else navigate(-1)
           }} className="p-2 -ml-2 text-gray-600">
             <ArrowLeft size={20} />
@@ -210,9 +263,44 @@ export default function AddQuestionPage() {
               </div>
             )}
 
+            {ocrConfigured && !ocrError && !isProcessing && (
+              <div className="bg-green-50 rounded-xl p-4 flex items-center gap-3 text-sm text-green-700">
+                <Check size={18} className="text-green-500" />
+                <span>OCR 已配置，拍照后点击「开始 OCR 识别」即可</span>
+              </div>
+            )}
+
+            {/* Processing Status */}
+            {isProcessing && (
+              <div className="bg-blue-50 rounded-xl p-4 flex items-center gap-3 text-sm text-blue-700">
+                <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                <div>
+                  <p className="font-medium">{ocrStatus}</p>
+                  <p className="text-xs text-blue-500 mt-0.5">请稍候，识别可能需要几秒钟...</p>
+                </div>
+              </div>
+            )}
+
+            {/* Error Display */}
+            {ocrError && (
+              <div className="bg-red-50 rounded-xl p-4 text-sm">
+                <div className="flex items-start gap-2 mb-2">
+                  <AlertCircle size={18} className="text-red-500 flex-shrink-0 mt-0.5" />
+                  <div className="text-red-700 whitespace-pre-line">{ocrError}</div>
+                </div>
+                <button
+                  onClick={() => setOcrError('')}
+                  className="text-xs text-red-500 underline"
+                >
+                  关闭
+                </button>
+              </div>
+            )}
+
             <ImageUploader
               images={images}
               onImagesChange={setImages}
+              onCropImage={handleCropImage}
               onStartOCR={ocrConfigured ? handleStartOCR : handleSkipOCR}
               isProcessing={isProcessing}
             />
@@ -228,13 +316,23 @@ export default function AddQuestionPage() {
           </>
         )}
 
-        {/* Step 2: Review OCR */}
+        {/* Step 2: Edit raw OCR text */}
+        {step === 'edit-text' && (
+          <OCRTextEditor
+            rawText={ocrRawText}
+            imageUrl={images[0]?.previewUrl}
+            onConfirm={handleTextConfirm}
+            onBack={() => setStep('upload')}
+          />
+        )}
+
+        {/* Step 3: Review structured fields */}
         {step === 'review' && (
           <OCRReviewForm
             parsed={ocrParsed}
             imageUrl={images[0]?.previewUrl}
             onConfirm={handleOCRConfirm}
-            onBack={() => setStep('upload')}
+            onBack={() => setStep('edit-text')}
           />
         )}
 
@@ -468,6 +566,15 @@ export default function AddQuestionPage() {
           </>
         )}
       </div>
+
+      {/* Image Cropper (full-screen overlay) */}
+      {croppingImage && (
+        <ImageCropper
+          imageUrl={croppingImage.previewUrl}
+          onCrop={handleCropDone}
+          onCancel={handleCropCancel}
+        />
+      )}
     </div>
   )
 }

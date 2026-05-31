@@ -13,7 +13,7 @@ import {
 import { useUIStore } from '../stores/ui-store'
 import { getOCRConfig, saveOCRConfig, isOCRConfigured } from '../lib/ocr-service'
 import type { DashboardStats } from '../lib/storage'
-import type { OCRConfig } from '../lib/ocr-service'
+import type { OCRConfig, OCRProvider } from '../lib/ocr-service'
 
 export default function SettingsPage() {
   const navigate = useNavigate()
@@ -96,7 +96,9 @@ export default function SettingsPage() {
             <div className="text-left">
               <span className="text-sm text-gray-700">OCR 拍照识别</span>
               <p className="text-xs text-gray-400 mt-0.5">
-                {isOCRConfigured() ? '已配置（腾讯云 OCR）' : '未配置'}
+                {ocrConfig.provider === 'tesseract' ? '免费引擎（Tesseract）' :
+                 ocrConfig.provider === 'tencent' && isOCRConfigured() ? '腾讯云 OCR' :
+                 '未配置'}
               </p>
             </div>
           </div>
@@ -106,6 +108,37 @@ export default function SettingsPage() {
         </button>
         {showOCRConfig && (
           <div className="border-t border-gray-100 p-4 space-y-3 animate-fade-in">
+            {/* Provider Selector */}
+            <div>
+              <label className="text-xs font-semibold text-gray-500 block mb-2">识别引擎</label>
+              <div className="flex gap-2">
+                {([
+                  { value: 'tesseract' as OCRProvider, label: '免费引擎', desc: '浏览器端识别，无需密钥' },
+                  { value: 'tencent' as OCRProvider, label: '腾讯云', desc: '云端识别，需 API 密钥' },
+                ]).map(({ value, label, desc }) => (
+                  <button
+                    key={value}
+                    onClick={() => {
+                      const updated = { ...ocrConfig, provider: value }
+                      setOcrConfig(updated)
+                      saveOCRConfig(updated)
+                    }}
+                    className={`flex-1 text-left p-2.5 rounded-lg border transition-colors ${
+                      ocrConfig.provider === value
+                        ? 'border-primary-300 bg-primary-50'
+                        : 'border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    <p className={`text-sm font-medium ${ocrConfig.provider === value ? 'text-primary-600' : 'text-gray-700'}`}>
+                      {label}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-0.5">{desc}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {ocrConfig.provider === 'tencent' && (<>
             <div>
               <label className="text-xs font-semibold text-gray-500 block mb-1.5">SecretId</label>
               <input
@@ -151,6 +184,18 @@ export default function SettingsPage() {
                 4. 密钥仅保存在本地浏览器中，不会上传
               </p>
             </div>
+            </>)}
+
+            {ocrConfig.provider === 'tesseract' && (
+              <div className="p-3 bg-green-50 rounded-xl">
+                <p className="text-xs text-green-600 leading-relaxed">
+                  <span className="font-semibold">✅ 免费引擎已就绪</span><br />
+                  使用浏览器内置 OCR 引擎，无需任何密钥。<br />
+                  识别速度取决于设备性能，通常在 5-20 秒。<br />
+                  首次使用会下载中文语言包（约 10MB）。
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>

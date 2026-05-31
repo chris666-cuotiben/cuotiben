@@ -13,7 +13,7 @@ const db = new Dexie('cuotiben') as Dexie & {
 
 db.version(1).stores({
   questions: 'id, category_id, status, difficulty, wrong_count, created_at, *tags',
-  categories: 'id, parent_id, type, slug',
+  categories: 'id, parent_id, type, slug, sort_order',
   practiceSessions: 'id, mode, started_at, completed_at',
   practiceAnswers: 'id, session_id, question_id, answered_at',
   syncQueue: '++id, table, timestamp',

@@ -1,10 +1,11 @@
-import { useState, useRef } from 'react'
-import { Camera, Image as ImageIcon, X, Upload } from 'lucide-react'
+import { useRef } from 'react'
+import { Camera, Image as ImageIcon, X, Upload, Crop } from 'lucide-react'
 import type { UploadedImage } from '../../lib/ocr-service'
 
 interface ImageUploaderProps {
   images: UploadedImage[]
   onImagesChange: (images: UploadedImage[]) => void
+  onCropImage?: (img: UploadedImage) => void
   onStartOCR: () => void
   isProcessing: boolean
   maxImages?: number
@@ -13,15 +14,16 @@ interface ImageUploaderProps {
 export default function ImageUploader({
   images,
   onImagesChange,
+  onCropImage,
   onStartOCR,
   isProcessing,
   maxImages = 3,
 }: ImageUploaderProps) {
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
+  const galleryInputRef = useRef<HTMLInputElement>(null)
 
   const handleFiles = (files: FileList | null) => {
-    if (!files) return
+    if (!files || files.length === 0) return
     const newImages: UploadedImage[] = []
     for (let i = 0; i < files.length; i++) {
       if (images.length + newImages.length >= maxImages) break
@@ -30,10 +32,15 @@ export default function ImageUploader({
       newImages.push({
         file,
         previewUrl: URL.createObjectURL(file),
-        id: crypto.randomUUID(),
+        id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       })
     }
-    onImagesChange([...images, ...newImages])
+    if (newImages.length > 0) {
+      onImagesChange([...images, ...newImages])
+    }
+    // Reset input so the same file can be selected again
+    if (cameraInputRef.current) cameraInputRef.current.value = ''
+    if (galleryInputRef.current) galleryInputRef.current.value = ''
   }
 
   const removeImage = (id: string) => {
@@ -44,13 +51,11 @@ export default function ImageUploader({
 
   return (
     <div className="space-y-4">
-      {/* Capture Buttons */}
+      {/* Capture Buttons - using <label> wrapper for iOS Safari compatibility */}
       {images.length < maxImages && (
         <div className="grid grid-cols-2 gap-3">
-          <button
-            onClick={() => cameraInputRef.current?.click()}
-            className="flex flex-col items-center justify-center gap-2 py-8 bg-white rounded-xl border-2 border-dashed border-gray-300 hover:border-primary-300 active:scale-[0.98] transition-all"
-          >
+          {/* Camera Button */}
+          <label className="relative flex flex-col items-center justify-center gap-2 py-8 bg-white rounded-xl border-2 border-dashed border-gray-300 active:scale-[0.98] transition-all cursor-pointer">
             <Camera size={28} className="text-primary-500" />
             <span className="text-sm font-medium text-gray-600">拍照</span>
             <span className="text-xs text-gray-400">直接拍摄题目</span>
@@ -60,26 +65,24 @@ export default function ImageUploader({
               accept="image/*"
               capture="environment"
               onChange={(e) => handleFiles(e.target.files)}
-              className="hidden"
+              className="absolute inset-0 opacity-0 cursor-pointer"
             />
-          </button>
+          </label>
 
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="flex flex-col items-center justify-center gap-2 py-8 bg-white rounded-xl border-2 border-dashed border-gray-300 hover:border-primary-300 active:scale-[0.98] transition-all"
-          >
+          {/* Gallery Button */}
+          <label className="relative flex flex-col items-center justify-center gap-2 py-8 bg-white rounded-xl border-2 border-dashed border-gray-300 active:scale-[0.98] transition-all cursor-pointer">
             <ImageIcon size={28} className="text-gray-500" />
             <span className="text-sm font-medium text-gray-600">相册</span>
             <span className="text-xs text-gray-400">从相册选取</span>
             <input
-              ref={fileInputRef}
+              ref={galleryInputRef}
               type="file"
               accept="image/*"
               multiple={maxImages > 1}
               onChange={(e) => handleFiles(e.target.files)}
-              className="hidden"
+              className="absolute inset-0 opacity-0 cursor-pointer"
             />
-          </button>
+          </label>
         </div>
       )}
 
@@ -87,36 +90,52 @@ export default function ImageUploader({
       {images.length > 0 && (
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            {images.map((img) => (
-              <div key={img.id} className="relative group">
+            {images.map((img, idx) => (
+              <div key={img.id} className="relative">
                 <img
                   src={img.previewUrl}
-                  alt="题目图片"
+                  alt={`题目图片 ${idx + 1}`}
                   className="w-full h-40 object-cover rounded-xl border border-gray-200"
                 />
-                <button
-                  onClick={() => removeImage(img.id)}
-                  className="absolute top-2 right-2 p-1.5 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 active:opacity-100 transition-opacity"
-                >
-                  <X size={14} />
-                </button>
-                {images.indexOf(img) === 0 && images.length > 1 && (
-                  <span className="absolute top-2 left-2 px-2 py-0.5 bg-primary-500 text-white text-xs rounded-full">
+                <div className="absolute top-2 right-2 flex gap-1.5">
+                  {onCropImage && (
+                    <button
+                      onClick={() => onCropImage(img)}
+                      className="p-1.5 bg-black/50 text-white rounded-full active:scale-90 transition-transform"
+                      aria-label="裁剪图片"
+                    >
+                      <Crop size={14} />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => removeImage(img.id)}
+                    className="p-1.5 bg-black/50 text-white rounded-full active:scale-90 transition-transform"
+                    aria-label="删除图片"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                {idx === 0 && images.length > 1 && (
+                  <span className="absolute top-2 left-2 px-2 py-0.5 bg-primary-500 text-white text-xs rounded-full font-medium">
                     主图
                   </span>
                 )}
               </div>
             ))}
 
-            {/* Add more button */}
+            {/* Add more */}
             {images.length < maxImages && (
-              <button
-                onClick={() => cameraInputRef.current?.click()}
-                className="h-40 flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-gray-300 hover:border-primary-300 active:scale-[0.98] transition-all"
-              >
+              <label className="relative h-40 flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-gray-300 active:scale-[0.98] transition-all cursor-pointer">
                 <Camera size={20} className="text-gray-400" />
                 <span className="text-xs text-gray-400">添加更多</span>
-              </button>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={(e) => handleFiles(e.target.files)}
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                />
+              </label>
             )}
           </div>
 
